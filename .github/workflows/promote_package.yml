@@ -44,36 +44,41 @@ jobs:
 
           echo "CLOUDSMITH_API_KEY=$cloudsmith_token" >> $GITHUB_ENV
 
-      # Step 2: Query for the package and retrieve identifier
-      - name: Get package identifier and promote
+      # Step 2: Query for the package in staging repository
+      - name: Query Cloudsmith for Package Identifier
         env:
           CLOUDSMITH_API_KEY: $CLOUDSMITH_API_KEY
         run: |
-          echo "Using Cloudsmith API Key for promoting package..."
+          echo "Using Cloudsmith API Key for querying package..."
 
-          # Query for the package and get its identifier
+          # Query the staging repository
           PACKAGE_QUERY="filename:${PACKAGE_NAME}-${{ github.event.inputs.package_version }}.tar.gz"
           echo "Searching for package with query: $PACKAGE_QUERY"
-
+          
           PACKAGE_DATA=$(curl -s -H "Authorization: Bearer $CLOUDSMITH_API_KEY" \
             "https://api.cloudsmith.io/v1/packages/${{ env.CLOUDSMITH_NAMESPACE }}/${{ env.CLOUDSMITH_STAGING_REPO }}/?query=$PACKAGE_QUERY" \
             -H 'accept: application/json')
 
-          echo "Debugging API Response:"
+          # Output the entire API response for debugging
+          echo "API Response:"
           echo "$PACKAGE_DATA"
 
-          # Extract `identifier_perm` from the top-level array
+          # Parse the identifier_perm from the top-level array
           IDENTIFIER=$(echo "$PACKAGE_DATA" | jq -r '.[0].identifier_perm' 2>/dev/null)
-
           if [ -z "$IDENTIFIER" ] || [ "$IDENTIFIER" = "null" ]; then
             echo "Failed to extract `identifier_perm` from API response!"
-            echo "API Response: $PACKAGE_DATA"
             exit 1
           fi
 
-          echo "Found package identifier: $IDENTIFIER"
+          echo "Extracted package identifier: $IDENTIFIER"
+          echo "IDENTIFIER=$IDENTIFIER" >> $GITHUB_ENV
 
-          # Promote package using the identifier
+      # Step 3: Promote the package to production repository
+      - name: Promote Package to Production Repo
+        env:
+          CLOUDSMITH_API_KEY: $CLOUDSMITH_API_KEY
+          IDENTIFIER: $IDENTIFIER
+        run: |
           echo "Promoting package: $IDENTIFIER"
           curl -X POST -H "Authorization: Bearer $CLOUDSMITH_API_KEY" \
             -H "Content-Type: application/json" \
