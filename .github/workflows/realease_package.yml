@@ -15,7 +15,7 @@ env:
 
 permissions:
   contents: read
-  actions: read
+  id-token: write       # Necessary for OIDC authentication
 
 jobs:
   publish:
@@ -23,32 +23,57 @@ jobs:
     if: ${{ github.event.workflow_run.conclusion == 'success' }}
 
     steps:
+      # Step 1: Download the build artifact for the specified workflow run ID
       - name: Download artifact
         uses: actions/download-artifact@v4
         with:
-          name: python-package
-          path: dist
-          repository: ${{ github.repository }}
+          name: python-package                
+          path: dist                   
+          repository: ${{ github.repository }}  
           github-token: ${{ github.token }}
           run-id: ${{ github.event.workflow_run.id }}
 
-
-
+      # Step 2: Verify that artifact files are downloaded successfully
       - name: List directory contents
         run: ls -la dist/
         shell: bash
 
-      - name: Install Cloudsmith CLI
-        uses: cloudsmith-io/cloudsmith-cli-action@v1.0.1
-        with:
-          oidc-namespace: ${{ env.CLOUDSMITH_NAMESPACE }}
-          oidc-service-slug: ${{ env.CLOUDSMITH_SERVICE_SLUG }}
+      # Step 3: Obtain Cloudsmith API Token using OIDC
+      - name: Obtain Cloudsmith API Token via OIDC
+        run: |
+          echo "Fetching Cloudsmith OIDC Token..."
 
+          # Fetch GitHub OIDC token (JWT)
+          oidc_value=$(curl -s -H "Authorization: bearer $ACTIONS_ID_TOKEN_REQUEST_TOKEN" \
+            "$ACTIONS_ID_TOKEN_REQUEST_URL&audience=api://AzureADTokenExchange" | jq -r '.value')
+
+          # Exchange OIDC token for the Cloudsmith API token
+          cloudsmith_token=$(curl -s -X POST -H "Content-Type: application/json" \
+            -d "{\"oidc_token\":\"$oidc_value\", \"service_slug\":\"${{ env.CLOUDSMITH_SERVICE_SLUG }}\"}" \
+            "https://api.cloudsmith.io/openid/${{ env.CLOUDSMITH_NAMESPACE }}/" | jq -r '.token')
+
+          if [ -z "$cloudsmith_token" ] || [ "$cloudsmith_token" = "null" ]; then
+            echo "Failed to fetch Cloudsmith API token!"
+            exit 1
+          fi
+
+          # Set token as environment variable for subsequent steps
+          echo "CLOUDSMITH_API_KEY=$cloudsmith_token" >> $GITHUB_ENV
+
+      # Step 4: Push the downloaded package to the Cloudsmith staging repository
       - name: Push package to Cloudsmith
+        env:
+          CLOUDSMITH_API_KEY: ${{ env.CLOUDSMITH_API_KEY }}
         run: |
           if ! ls dist/*.tar.gz 1> /dev/null 2>&1; then
             echo "No package found to upload"
             exit 1
           fi
-          cloudsmith push python ${{ env.CLOUDSMITH_NAMESPACE }}/${{ env.CLOUDSMITH_REPOSITORY }} dist/*.tar.gz --republish
+
+          # Push the Python package (tar.gz) to Cloudsmith
+          echo "Preparing to push Python package(s) to Cloudsmith..."
+          for file in dist/*.tar.gz; do
+            echo "Pushing $file to Cloudsmith staging repository..."
+            cloudsmith push python ${{ env.CLOUDSMITH_NAMESPACE }}/${{ env.CLOUDSMITH_REPOSITORY }} $file --republish
+          done
         shell: bash
