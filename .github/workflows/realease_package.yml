@@ -38,7 +38,13 @@ jobs:
         run: ls -la dist/
         shell: bash
 
-      # Step 3: Obtain Cloudsmith API Token using OIDC
+      # Step 3: Install Cloudsmith CLI
+        - name: Install Cloudsmith CLI
+        run: |
+          python -m pip install --upgrade pip
+          pip install --upgrade cloudsmith-cli
+
+      # Step 4: Obtain Cloudsmith API Token using OIDC
       - name: Obtain Cloudsmith API Token via OIDC
         run: |
           echo "Fetching Cloudsmith OIDC Token..."
@@ -60,7 +66,7 @@ jobs:
           # Set token as environment variable for subsequent steps
           echo "CLOUDSMITH_API_KEY=$cloudsmith_token" >> $GITHUB_ENV
 
-      # Step 4: Push the downloaded package to the Cloudsmith staging repository
+      # Step 5: Push the downloaded package to the Cloudsmith staging repository
       - name: Push package to Cloudsmith
         env:
           CLOUDSMITH_API_KEY: ${{ env.CLOUDSMITH_API_KEY }}
