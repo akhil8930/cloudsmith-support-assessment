@@ -31,8 +31,15 @@ jobs:
       - name: Tag Package as Ready for Production
         run: |
           PACKAGE_IDENTIFIER="${{ github.event.client_payload.package_identifier }}"
-          echo "Tagging package $PACKAGE_IDENTIFIER with 'ready-for-production'..."
-          cloudsmith tag add ${{ env.CLOUDSMITH_NAMESPACE }}/${{ env.CLOUDSMITH_STAGING_REPO }} $PACKAGE_IDENTIFIER ready-for-production
+          
+          if [ -z "$PACKAGE_IDENTIFIER" ]; then
+            echo "Error: PACKAGE_IDENTIFIER is empty. Ensure the webhook payload includes 'package_identifier'."
+            exit 1
+          fi
+
+          FULL_PACKAGE_SLUG="${{ env.CLOUDSMITH_NAMESPACE }}/${{ env.CLOUDSMITH_STAGING_REPO }}/$PACKAGE_IDENTIFIER"
+          echo "Tagging package $FULL_PACKAGE_SLUG with 'ready-for-production'..."
+          cloudsmith tag add $FULL_PACKAGE_SLUG ready-for-production
 
       # Step 3: Query for all packages tagged with 'ready-for-production' and promote them
       - name: Query and Promote Packages
@@ -59,4 +66,3 @@ jobs:
               ${{ env.CLOUDSMITH_PRODUCTION_REPO }}
           done
         shell: bash
-        
