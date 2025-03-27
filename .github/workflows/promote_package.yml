@@ -16,39 +16,66 @@ env:
   PACKAGE_NAME: 'example_package'
 
 permissions:
-  id-token: write
+  id-token: write       # Necessary for GitHub to generate an OIDC token
 
 jobs:
   promote:
     runs-on: ubuntu-latest
 
     steps:
-      - name: Install Cloudsmith CLI
-        uses: cloudsmith-io/cloudsmith-cli-action@v1.0.1
-        with:
-          oidc-namespace: ${{ env.CLOUDSMITH_NAMESPACE }}
-          oidc-service-slug: ${{ env.CLOUDSMITH_SERVICE_SLUG }}
+      # Step 1: Check out the repository code
+      - name: Checkout code
+        uses: actions/checkout@v2
 
-      - name: Get package identifier and promote
+      # Step 2: Get OIDC token and Cloudsmith API key
+      - name: Obtain Cloudsmith API Token using OIDC
         run: |
+          echo "Fetching Cloudsmith OIDC Token..."
+
+          # Get GitHub OIDC token (JWT)
+          oidc_value=$(curl -s -H "Authorization: bearer $ACTIONS_ID_TOKEN_REQUEST_TOKEN" "$ACTIONS_ID_TOKEN_REQUEST_URL&audience=api://AzureADTokenExchange" | jq -r '.value')
+          
+          # Exchange OIDC token for Cloudsmith access token
+          cloudsmith_token=$(curl -s -X POST -H "Content-Type: application/json" \
+            -d "{\"oidc_token\":\"$oidc_value\", \"service_slug\":\"${{ env.CLOUDSMITH_SERVICE_SLUG }}\"}" \
+            "https://api.cloudsmith.io/openid/${{ env.CLOUDSMITH_NAMESPACE }}/" | jq -r '.token')
+          
+          if [ -z "$cloudsmith_token" ] || [ "$cloudsmith_token" = "null" ]; then
+            echo "Failed to fetch Cloudsmith token!"
+            exit 1
+          fi
+          
+          echo "CLOUDSMITH_API_KEY=$cloudsmith_token" >> $GITHUB_ENV
+
+      # Step 3: Query for the package and promote
+      - name: Get package identifier and promote
+        env:
+          CLOUDSMITH_API_KEY: $CLOUDSMITH_API_KEY
+        run: |
+          echo "Using Cloudsmith API Key for promoting package..."
+
           # Query for the package and get its identifier
           PACKAGE_QUERY="filename:${PACKAGE_NAME}-${{ github.event.inputs.package_version }}.tar.gz"
           echo "Searching for package with query: $PACKAGE_QUERY"
           
-          PACKAGE_DATA=$(cloudsmith list package ${{ env.CLOUDSMITH_NAMESPACE }}/${{ env.CLOUDSMITH_STAGING_REPO }} -q "$PACKAGE_QUERY" -F json)
+          PACKAGE_DATA=$(curl -s -H "Authorization: Bearer $CLOUDSMITH_API_KEY" \
+            "https://api.cloudsmith.io/v1/packages/${{ env.CLOUDSMITH_NAMESPACE }}/${{ env.CLOUDSMITH_STAGING_REPO }}/?query=$PACKAGE_QUERY" \
+            -H 'accept: application/json')
           
           # Extract the identifier_perm using jq
           IDENTIFIER=$(echo "$PACKAGE_DATA" | jq -r '.data[0].identifier_perm')
           
           if [ -z "$IDENTIFIER" ] || [ "$IDENTIFIER" = "null" ]; then
-            echo "Failed to find package identifier"
+            echo "Failed to find package identifier!"
             exit 1
           fi
           
           echo "Found package identifier: $IDENTIFIER"
           
           # Promote package using the identifier
-          cloudsmith mv --yes \
-            ${{ env.CLOUDSMITH_NAMESPACE }}/${{ env.CLOUDSMITH_STAGING_REPO }}/$IDENTIFIER \
-            ${{ env.CLOUDSMITH_PRODUCTION_REPO }}
-        shell: bash
+          curl -X POST -H "Authorization: Bearer $CLOUDSMITH_API_KEY" \
+            -H "Content-Type: application/json" \
+            -d "{\"dest_repo\": \"${{ env.CLOUDSMITH_PRODUCTION_REPO }}\"}" \
+            "https://api.cloudsmith.io/v1/packages/${{ env.CLOUDSMITH_NAMESPACE }}/${{ env.CLOUDSMITH_STAGING_REPO }}/$IDENTIFIER/promote/"
+          
+          echo "Package promotion completed successfully."
