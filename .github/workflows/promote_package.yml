@@ -23,7 +23,7 @@ jobs:
     runs-on: ubuntu-latest
 
     steps:
-      # Step 1: Get OIDC token and Cloudsmith API key
+      # Step 1: Obtain Cloudsmith API Token using OIDC
       - name: Obtain Cloudsmith API Token via OIDC
         run: |
           echo "Fetching Cloudsmith OIDC Token..."
@@ -44,14 +44,14 @@ jobs:
 
           echo "CLOUDSMITH_API_KEY=$cloudsmith_token" >> $GITHUB_ENV
 
-      # Step 2: Query for the package and promote
+      # Step 2: Query for the package and retrieve identifier
       - name: Get package identifier and promote
         env:
           CLOUDSMITH_API_KEY: $CLOUDSMITH_API_KEY
         run: |
           echo "Using Cloudsmith API Key for promoting package..."
 
-          # Query for the package
+          # Query for the package and get its identifier
           PACKAGE_QUERY="filename:${PACKAGE_NAME}-${{ github.event.inputs.package_version }}.tar.gz"
           echo "Searching for package with query: $PACKAGE_QUERY"
 
@@ -62,14 +62,9 @@ jobs:
           echo "Debugging API Response:"
           echo "$PACKAGE_DATA"
 
-          # Verify the structure of the response
-          if [[ "$PACKAGE_DATA" == *"error"* || -z "$PACKAGE_DATA" ]]; then
-            echo "Failed to find matching package. Response: $PACKAGE_DATA"
-            exit 1
-          fi
+          # Extract `identifier_perm` from the top-level array
+          IDENTIFIER=$(echo "$PACKAGE_DATA" | jq -r '.[0].identifier_perm' 2>/dev/null)
 
-          # Extract identifier using jq
-          IDENTIFIER=$(echo "$PACKAGE_DATA" | jq -r '.data[0].identifier_perm' 2>/dev/null)
           if [ -z "$IDENTIFIER" ] || [ "$IDENTIFIER" = "null" ]; then
             echo "Failed to extract `identifier_perm` from API response!"
             echo "API Response: $PACKAGE_DATA"
@@ -79,6 +74,7 @@ jobs:
           echo "Found package identifier: $IDENTIFIER"
 
           # Promote package using the identifier
+          echo "Promoting package: $IDENTIFIER"
           curl -X POST -H "Authorization: Bearer $CLOUDSMITH_API_KEY" \
             -H "Content-Type: application/json" \
             -d "{\"dest_repo\": \"${{ env.CLOUDSMITH_PRODUCTION_REPO }}\"}" \
