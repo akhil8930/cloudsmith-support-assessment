@@ -51,20 +51,19 @@ jobs:
         run: |
           echo "Using Cloudsmith API Key for querying package..."
 
+          # Query for the package
           PACKAGE_QUERY="filename:${PACKAGE_NAME}-${{ github.event.inputs.package_version }}.tar.gz"
           echo "Searching for package with query: $PACKAGE_QUERY"
-          
+
+          # Save entire API response to a file
           PACKAGE_DATA=$(curl -s -H "Authorization: Bearer $CLOUDSMITH_API_KEY" \
             "https://api.cloudsmith.io/v1/packages/${{ env.CLOUDSMITH_NAMESPACE }}/${{ env.CLOUDSMITH_STAGING_REPO }}/?query=$PACKAGE_QUERY" \
             -H 'accept: application/json')
+          echo "$PACKAGE_DATA" > debug_api_response.json
 
-          echo "API Response:"
-          echo "$PACKAGE_DATA"
-
-          # Extract `identifier_perm` from the top-level array
+          # Parse `identifier_perm` from API response
           IDENTIFIER=$(echo "$PACKAGE_DATA" | jq -r '.[0].identifier_perm' 2>/dev/null)
           
-          # Handle extraction failures
           if [ -z "$IDENTIFIER" ] || [ "$IDENTIFIER" = "null" ]; then
             echo "Failed to extract `identifier_perm` from API response!"
             exit 1
@@ -73,12 +72,24 @@ jobs:
           echo "Extracted package identifier: $IDENTIFIER"
           echo "IDENTIFIER=$IDENTIFIER" >> $GITHUB_ENV
 
-      # Step 3: Promote the package to production repository
+      # Step 3: Upload Debug Data
+      - name: Upload Debug Data
+        uses: actions/upload-artifact@v3
+        with:
+          name: debug-api-response
+          path: debug_api_response.json
+
+      # Step 4: Promote the package to production repository
       - name: Promote Package to Production Repo
         env:
           CLOUDSMITH_API_KEY: $CLOUDSMITH_API_KEY
           IDENTIFIER: $IDENTIFIER
         run: |
+          if [ -z "$IDENTIFIER" ]; then
+            echo "IDENTIFIER is unset or invalid!"
+            exit 1
+          fi
+
           echo "Promoting package: $IDENTIFIER"
           curl -X POST -H "Authorization: Bearer $CLOUDSMITH_API_KEY" \
             -H "Content-Type: application/json" \
