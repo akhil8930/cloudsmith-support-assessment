@@ -51,7 +51,6 @@ jobs:
         run: |
           echo "Using Cloudsmith API Key for querying package..."
 
-          # Query the staging repository
           PACKAGE_QUERY="filename:${PACKAGE_NAME}-${{ github.event.inputs.package_version }}.tar.gz"
           echo "Searching for package with query: $PACKAGE_QUERY"
           
@@ -59,12 +58,13 @@ jobs:
             "https://api.cloudsmith.io/v1/packages/${{ env.CLOUDSMITH_NAMESPACE }}/${{ env.CLOUDSMITH_STAGING_REPO }}/?query=$PACKAGE_QUERY" \
             -H 'accept: application/json')
 
-          # Output the entire API response for debugging
           echo "API Response:"
           echo "$PACKAGE_DATA"
 
-          # Parse the identifier_perm from the top-level array
+          # Extract `identifier_perm` from the top-level array
           IDENTIFIER=$(echo "$PACKAGE_DATA" | jq -r '.[0].identifier_perm' 2>/dev/null)
+          
+          # Handle extraction failures
           if [ -z "$IDENTIFIER" ] || [ "$IDENTIFIER" = "null" ]; then
             echo "Failed to extract `identifier_perm` from API response!"
             exit 1
