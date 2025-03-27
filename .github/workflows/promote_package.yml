@@ -23,71 +23,34 @@ jobs:
     runs-on: ubuntu-latest
 
     steps:
-      # Step 1: Obtain Cloudsmith API Token using OIDC
-      - name: Obtain Cloudsmith API Token via OIDC
+      # Step 1: Install Cloudsmith CLI with OIDC
+      - name: Install Cloudsmith CLI
+        uses: cloudsmith-io/cloudsmith-cli-action@v1.0.1
+        with:
+          oidc-namespace: ${{ env.CLOUDSMITH_NAMESPACE }}
+          oidc-service-slug: ${{ env.CLOUDSMITH_SERVICE_SLUG }}
+
+      # Step 2: Query for Package Identifier and Promote
+      - name: Query Package and Promote
         run: |
-          echo "Fetching Cloudsmith OIDC Token..."
-
-          # Fetch GitHub OIDC token (JWT)
-          oidc_value=$(curl -s -H "Authorization: bearer $ACTIONS_ID_TOKEN_REQUEST_TOKEN" \
-            "$ACTIONS_ID_TOKEN_REQUEST_URL&audience=api://AzureADTokenExchange" | jq -r '.value')
-
-          # Exchange OIDC token for Cloudsmith access token
-          cloudsmith_token=$(curl -s -X POST -H "Content-Type: application/json" \
-            -d "{\"oidc_token\":\"$oidc_value\", \"service_slug\":\"${{ env.CLOUDSMITH_SERVICE_SLUG }}\"}" \
-            "https://api.cloudsmith.io/openid/${{ env.CLOUDSMITH_NAMESPACE }}/" | jq -r '.token')
-
-          if [ -z "$cloudsmith_token" ] || [ "$cloudsmith_token" = "null" ]; then
-            echo "Failed to fetch Cloudsmith token!"
-            exit 1
-          fi
-
-          echo "CLOUDSMITH_API_KEY=$cloudsmith_token" >> $GITHUB_ENV
-
-      # Step 2: Query for Package Identifier
-      - name: Query Cloudsmith for Package Identifier
-        env:
-          CLOUDSMITH_API_KEY: $CLOUDSMITH_API_KEY
-        run: |
-          echo "Using Cloudsmith API Key to query package..."
-
-          # Query data from staging repository
+          # Query for the package and get its identifier
           PACKAGE_QUERY="filename:${PACKAGE_NAME}-${{ github.event.inputs.package_version }}.tar.gz"
           echo "Searching for package with query: $PACKAGE_QUERY"
 
-          PACKAGE_DATA=$(curl -s -H "Authorization: Bearer $CLOUDSMITH_API_KEY" \
-            "https://api.cloudsmith.io/v1/packages/${{ env.CLOUDSMITH_NAMESPACE }}/${{ env.CLOUDSMITH_STAGING_REPO }}/?query=$PACKAGE_QUERY" \
-            -H 'accept: application/json')
-          echo "$PACKAGE_DATA" > debug_api_response.json
+          PACKAGE_DATA=$(cloudsmith list package ${{ env.CLOUDSMITH_NAMESPACE }}/${{ env.CLOUDSMITH_STAGING_REPO }} -q "$PACKAGE_QUERY" -F json)
 
-          IDENTIFIER=$(echo "$PACKAGE_DATA" | jq -r '.[0].identifier_perm' 2>/dev/null)
+          # Extract the identifier_perm using jq
+          IDENTIFIER=$(echo "$PACKAGE_DATA" | jq -r '.data[0].identifier_perm')
+
           if [ -z "$IDENTIFIER" ] || [ "$IDENTIFIER" = "null" ]; then
-            echo "Failed to extract `identifier_perm` from API response!"
-            echo "Raw Response: $PACKAGE_DATA"
+            echo "Failed to find package identifier"
             exit 1
           fi
 
-          echo "Extracted package identifier: $IDENTIFIER"
-          echo "IDENTIFIER=$IDENTIFIER" >> $GITHUB_ENV
+          echo "Found package identifier: $IDENTIFIER"
 
-      # Step 3: Promote Package to Production
-      - name: Promote Package to Production Repo
-        env:
-          CLOUDSMITH_API_KEY: $CLOUDSMITH_API_KEY
-          IDENTIFIER: $IDENTIFIER
-        run: |
-          echo "Promoting package with identifier: $IDENTIFIER"
-
-          PROMOTION_OUTPUT=$(curl -s -o promotion_result.json -w '%{http_code}' -X POST \
-            -H "Authorization: Bearer $CLOUDSMITH_API_KEY" \
-            -H "Content-Type: application/json" \
-            -d "{\"dest_repo\": \"${{ env.CLOUDSMITH_PRODUCTION_REPO }}\"}" \
-            "https://api.cloudsmith.io/v1/packages/${{ env.CLOUDSMITH_NAMESPACE }}/${{ env.CLOUDSMITH_STAGING_REPO }}/$IDENTIFIER/promote/")
-
-          if [ "$PROMOTION_OUTPUT" -ne 200 ]; then
-            echo "Promotion failed! Debugging promotion result:"
-            cat promotion_result.json
-            exit 1
-          fi
-
-          echo "Package promotion completed successfully."
+          # Promote package using the identifier
+          cloudsmith mv --yes \
+            ${{ env.CLOUDSMITH_NAMESPACE }}/${{ env.CLOUDSMITH_STAGING_REPO }}/$IDENTIFIER \
+            ${{ env.CLOUDSMITH_PRODUCTION_REPO }}
+        shell: bash
