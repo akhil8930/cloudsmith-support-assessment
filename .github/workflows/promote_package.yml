@@ -59,4 +59,3 @@ jobs:
               ${{ env.CLOUDSMITH_PRODUCTION_REPO }}
           done
         shell: bash
-        
