@@ -27,7 +27,13 @@ jobs:
           oidc-namespace: ${{ env.CLOUDSMITH_NAMESPACE }}
           oidc-service-slug: ${{ env.CLOUDSMITH_SERVICE_SLUG }}
 
-      # Step 2: Tag the package with 'ready-for-production'
+      # Step 2: Debugging - List all packages in the staging repository
+      - name: List Packages in Staging
+        run: |
+          echo "Listing all packages in the staging repository..."
+          cloudsmith list package ${{ env.CLOUDSMITH_NAMESPACE }}/${{ env.CLOUDSMITH_STAGING_REPO }}
+
+      # Step 3: Tag the package with 'ready-for-production'
       - name: Tag Package as Ready for Production
         run: |
           PACKAGE_IDENTIFIER="${{ github.event.client_payload.package_identifier }}"
@@ -49,7 +55,7 @@ jobs:
             exit 1
           }
 
-      # Step 3: Query for all packages tagged with 'ready-for-production' and promote them
+      # Step 4: Query for all packages tagged with 'ready-for-production' and promote them
       - name: Query and Promote Packages
         run: |
           # Query for all packages tagged with 'ready-for-production'
