@@ -97,10 +97,12 @@ jobs:
             ${{ env.CLOUDSMITH_NAMESPACE }}/${{ env.CLOUDSMITH_STAGING_REPO }} \
             -F json)
 
-          echo "Raw PACKAGE_DATA for All Packages: $PACKAGE_DATA"
+          # Debug: Log raw JSON data for inspection
+          echo "Raw JSON Data from Cloudsmith:"
+          echo "$PACKAGE_DATA" | jq .
 
           # Filter packages with the 'ready-for-production' tag using jq
-          IDENTIFIERS=$(echo "$PACKAGE_DATA" | jq -r ".data[] | select(.tags[] == \"${{ env.PACKAGE_TAG }}\") | .identifier_perm")
+          IDENTIFIERS=$(echo "$PACKAGE_DATA" | jq -r ".data[] | select(.tags[]? == \"${{ env.PACKAGE_TAG }}\") | .identifier_perm")
 
           if [ -z "$IDENTIFIERS" ]; then
             echo "No packages found with tag '${{ env.PACKAGE_TAG }}'. Exiting."
