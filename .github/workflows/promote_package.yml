@@ -10,7 +10,7 @@ env:
   CLOUDSMITH_STAGING_REPO: 'staging'
   CLOUDSMITH_PRODUCTION_REPO: 'production'
   CLOUDSMITH_SERVICE_SLUG: ${{ vars.CLOUDSMITH_SERVICE_SLUG }}
-  PACKAGE_TAG: 'ready-for-production' # Tag required for production promotion
+  PACKAGE_TAG: 'ready-for-production' # Tag used for production promotion
 
 permissions:
   id-token: write # Necessary for GitHub to generate an OIDC token
@@ -21,7 +21,7 @@ jobs:
 
     steps:
       # Step 1: Debug Webhook Payload
-      - name: Log Webhook Payload
+      - name: Debug Webhook Payload
         run: |
           echo "Webhook Payload: ${{ toJson(github.event.client_payload) }}"
           cat $GITHUB_EVENT_PATH
@@ -33,77 +33,83 @@ jobs:
           oidc-namespace: ${{ env.CLOUDSMITH_NAMESPACE }}
           oidc-service-slug: ${{ env.CLOUDSMITH_SERVICE_SLUG }}
 
-      # Step 3: Retrieve Package Identifier
-      - name: Retrieve Package Identifier
+      # Step 3: Extract PACKAGE_NAME and PACKAGE_VERSION
+      - name: Extract Package Name and Version
         run: |
-          # Extract identifier from webhook payload
-          IDENTIFIER="${{ github.event.client_payload.package_identifier }}"
+          # Extract PACKAGE_NAME and PACKAGE_VERSION from the webhook payload
+          PACKAGE_NAME="${{ github.event.client_payload.package_name }}"
+          PACKAGE_VERSION="${{ github.event.client_payload.package_version }}"
           
-          if [ -z "$IDENTIFIER" ]; then
-            echo "Webhook failed to provide package identifier. Attempting query..."
-            
-            # Replace these dynamic parameters with appropriate values based on your workflow
-            PACKAGE_NAME="${{ github.event.inputs.package_name }}"
-            PACKAGE_VERSION="${{ github.event.inputs.package_version }}"
-            
-            if [ -z "$PACKAGE_NAME" ] || [ -z "$PACKAGE_VERSION" ]; then
-              echo "PACKAGE_NAME and/or PACKAGE_VERSION are not provided."
-              exit 1
-            fi
-            
-            PACKAGE_QUERY="filename:${PACKAGE_NAME}-${PACKAGE_VERSION}.tar.gz"
-            echo "Searching for package with query: $PACKAGE_QUERY"
-
-            PACKAGE_DATA=$(cloudsmith list package ${{ env.CLOUDSMITH_NAMESPACE }}/${{ env.CLOUDSMITH_STAGING_REPO }} -q "$PACKAGE_QUERY" -F json)
-
-            IDENTIFIER=$(echo "$PACKAGE_DATA" | jq -r '.data[0].identifier_perm')
-            
-            if [ -z "$IDENTIFIER" ] || [ "$IDENTIFIER" = "null" ]; then
-              echo "Failed to find package identifier."
-              exit 1
-            fi
-            
-            echo "Fallback successfully found package identifier: $IDENTIFIER"
+          if [ -z "$PACKAGE_NAME" ] || [ -z "$PACKAGE_VERSION" ]; then
+            echo "PACKAGE_NAME or PACKAGE_VERSION is missing in the webhook payload."
+            exit 1
           fi
 
-          echo "Using Package Identifier: $IDENTIFIER"
+          echo "PACKAGE_NAME=$PACKAGE_NAME" >> $GITHUB_ENV
+          echo "PACKAGE_VERSION=$PACKAGE_VERSION" >> $GITHUB_ENV
 
-          # Save package identifier for subsequent steps
+          echo "Extracted PACKAGE_NAME: $PACKAGE_NAME"
+          echo "Extracted PACKAGE_VERSION: $PACKAGE_VERSION"
+
+      # Step 4: Query the Package Identifier
+      - name: Retrieve Package Identifier
+        run: |
+          # Use PACKAGE_NAME and PACKAGE_VERSION extracted from the webhook payload
+          PACKAGE_QUERY="filename:${{ env.PACKAGE_NAME }}-${{ env.PACKAGE_VERSION }}.tar.gz"
+          echo "Searching for package with query: $PACKAGE_QUERY"
+
+          PACKAGE_DATA=$(cloudsmith list package \
+            ${{ env.CLOUDSMITH_NAMESPACE }}/${{ env.CLOUDSMITH_STAGING_REPO }} \
+            -q "$PACKAGE_QUERY" -F json)
+
+          IDENTIFIER=$(echo "$PACKAGE_DATA" | jq -r '.data[0].identifier_perm')
+
+          if [ -z "$IDENTIFIER" ] || [ "$IDENTIFIER" = "null" ]; then
+            echo "Failed to find package identifier."
+            exit 1
+          fi
+
           echo "IDENTIFIER=$IDENTIFIER" >> $GITHUB_ENV
+          echo "Found Package Identifier: $IDENTIFIER"
 
-      # Step 4: Tag the Package with the ready-for-production Tag
+      # Step 5: Tag the Package
       - name: Tag Package
         run: |
-          # Tag the package with 'ready-for-production'
-          cloudsmith tag add "${{ env.CLOUDSMITH_NAMESPACE }}/${{ env.CLOUDSMITH_STAGING_REPO }}/$IDENTIFIER" "${{ env.PACKAGE_TAG }}"
+          cloudsmith tag add \
+            "${{ env.CLOUDSMITH_NAMESPACE }}/${{ env.CLOUDSMITH_STAGING_REPO }}/$IDENTIFIER" \
+            "${{ env.PACKAGE_TAG }}"
+
           if [ $? -ne 0 ]; then
             echo "Failed to tag the package with '${{ env.PACKAGE_TAG }}'."
             exit 1
           fi
+
           echo "Package successfully tagged with '${{ env.PACKAGE_TAG }}'."
 
-      # Step 5: Promote All Tagged Packages to Production
+      # Step 6: Promote Tagged Packages
       - name: Promote Tagged Packages
         run: |
-          # Query packages tagged with 'ready-for-production'
           PACKAGE_QUERY="tags:${{ env.PACKAGE_TAG }}"
           echo "Searching for all packages tagged with query: $PACKAGE_QUERY"
 
-          PACKAGE_DATA=$(cloudsmith list package ${{ env.CLOUDSMITH_NAMESPACE }}/${{ env.CLOUDSMITH_STAGING_REPO }} -q "$PACKAGE_QUERY" -F json)
+          PACKAGE_DATA=$(cloudsmith list package \
+            ${{ env.CLOUDSMITH_NAMESPACE }}/${{ env.CLOUDSMITH_STAGING_REPO }} \
+            -q "$PACKAGE_QUERY" -F json)
 
-          if [ -z "$PACKAGE_DATA" ] || [[ "$PACKAGE_DATA" == *"error"* ]]; then
+          IDENTIFIERS=$(echo "$PACKAGE_DATA" | jq -r '.data[].identifier_perm')
+
+          if [ -z "$IDENTIFIERS" ]; then
             echo "No packages found with tag '${{ env.PACKAGE_TAG }}'. Exiting."
             exit 0
           fi
 
-          IDENTIFIERS=$(echo "$PACKAGE_DATA" | jq -r '.data[].identifier_perm')
-          echo "Found package identifiers tagged with '${{ env.PACKAGE_TAG }}': $IDENTIFIERS"
+          echo "Found packages tagged with '${{ env.PACKAGE_TAG }}': $IDENTIFIERS"
 
-          # Promote each package
           for ID in $IDENTIFIERS; do
             cloudsmith mv --yes \
               ${{ env.CLOUDSMITH_NAMESPACE }}/${{ env.CLOUDSMITH_STAGING_REPO }}/$ID \
               ${{ env.CLOUDSMITH_PRODUCTION_REPO }}
+
             if [ $? -eq 0 ]; then
               echo "Successfully promoted package: $ID"
             else
