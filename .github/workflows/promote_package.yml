@@ -20,8 +20,8 @@ jobs:
     runs-on: ubuntu-latest
 
     steps:
-      # Step 1: Validate webhook payload for debugging/analyzing
-      - name: Debug Webhook Payload
+      # Step 1: Debug Webhook Payload
+      - name: Log Webhook Payload
         run: |
           echo "Webhook Payload: ${{ toJson(github.event.client_payload) }}"
           cat $GITHUB_EVENT_PATH
@@ -42,12 +42,18 @@ jobs:
           if [ -z "$IDENTIFIER" ]; then
             echo "Webhook failed to provide package identifier. Attempting query..."
             
-            # Fallback: Query package to retrieve identifier (adjust PACKAGE_NAME and PACKAGE_VERSION as needed)
-            PACKAGE_NAME='your-package-name' # Replace with your package name
-            PACKAGE_VERSION='your-package-version' # Replace with your package version
+            # Replace these dynamic parameters with appropriate values based on your workflow
+            PACKAGE_NAME="${{ github.event.inputs.package_name }}"
+            PACKAGE_VERSION="${{ github.event.inputs.package_version }}"
+            
+            if [ -z "$PACKAGE_NAME" ] || [ -z "$PACKAGE_VERSION" ]; then
+              echo "PACKAGE_NAME and/or PACKAGE_VERSION are not provided."
+              exit 1
+            fi
+            
             PACKAGE_QUERY="filename:${PACKAGE_NAME}-${PACKAGE_VERSION}.tar.gz"
-
             echo "Searching for package with query: $PACKAGE_QUERY"
+
             PACKAGE_DATA=$(cloudsmith list package ${{ env.CLOUDSMITH_NAMESPACE }}/${{ env.CLOUDSMITH_STAGING_REPO }} -q "$PACKAGE_QUERY" -F json)
 
             IDENTIFIER=$(echo "$PACKAGE_DATA" | jq -r '.data[0].identifier_perm')
@@ -62,37 +68,38 @@ jobs:
 
           echo "Using Package Identifier: $IDENTIFIER"
 
-      # Step 4: Tag the Synchronized Package with ready-for-production
-      - name: Tag the Synchronized Package
+          # Save package identifier for subsequent steps
+          echo "IDENTIFIER=$IDENTIFIER" >> $GITHUB_ENV
+
+      # Step 4: Tag the Package with the ready-for-production Tag
+      - name: Tag Package
         run: |
+          # Tag the package with 'ready-for-production'
           cloudsmith tag add "${{ env.CLOUDSMITH_NAMESPACE }}/${{ env.CLOUDSMITH_STAGING_REPO }}/$IDENTIFIER" "${{ env.PACKAGE_TAG }}"
           if [ $? -ne 0 ]; then
             echo "Failed to tag the package with '${{ env.PACKAGE_TAG }}'."
             exit 1
           fi
-          
           echo "Package successfully tagged with '${{ env.PACKAGE_TAG }}'."
 
-      # Step 5: Query for all ready-for-production tagged packages and promote
-      - name: Query Tagged Packages and Promote
+      # Step 5: Promote All Tagged Packages to Production
+      - name: Promote Tagged Packages
         run: |
-          # Query for all packages tagged with ready-for-production
+          # Query packages tagged with 'ready-for-production'
           PACKAGE_QUERY="tags:${{ env.PACKAGE_TAG }}"
-          echo "Searching for all packages with tag: $PACKAGE_QUERY"
+          echo "Searching for all packages tagged with query: $PACKAGE_QUERY"
 
           PACKAGE_DATA=$(cloudsmith list package ${{ env.CLOUDSMITH_NAMESPACE }}/${{ env.CLOUDSMITH_STAGING_REPO }} -q "$PACKAGE_QUERY" -F json)
 
-          # Check the API response
           if [ -z "$PACKAGE_DATA" ] || [[ "$PACKAGE_DATA" == *"error"* ]]; then
             echo "No packages found with tag '${{ env.PACKAGE_TAG }}'. Exiting."
             exit 0
           fi
 
-          # Extract all identifiers for packages tagged as ready-for-production
           IDENTIFIERS=$(echo "$PACKAGE_DATA" | jq -r '.data[].identifier_perm')
-          echo "Found the following package identifiers tagged with '${{ env.PACKAGE_TAG }}': $IDENTIFIERS"
+          echo "Found package identifiers tagged with '${{ env.PACKAGE_TAG }}': $IDENTIFIERS"
 
-          # Promote each package from staging to production
+          # Promote each package
           for ID in $IDENTIFIERS; do
             cloudsmith mv --yes \
               ${{ env.CLOUDSMITH_NAMESPACE }}/${{ env.CLOUDSMITH_STAGING_REPO }}/$ID \
@@ -105,4 +112,4 @@ jobs:
             fi
           done
 
-          echo "All tagged packages successfully promoted to ${CLOUDSMITH_PRODUCTION_REPO}."
+          echo "All tagged packages promoted to '${{ env.CLOUDSMITH_PRODUCTION_REPO }}'."
