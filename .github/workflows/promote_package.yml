@@ -53,7 +53,7 @@ jobs:
           echo "Transformed FORMATTED_PACKAGE_NAME: $FORMATTED_PACKAGE_NAME"
           echo "Constructed FULL_PACKAGE_FILENAME: $FULL_PACKAGE_FILENAME"
 
-      # Step 3: Tag the Specific Package
+      # Step 3: Tag the Specific Package (unchanged)
       - name: Tag Package with ready-for-production Tag
         run: |
           cloudsmith tag add \
