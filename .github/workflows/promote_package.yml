@@ -53,28 +53,7 @@ jobs:
           echo "Transformed FORMATTED_PACKAGE_NAME: $FORMATTED_PACKAGE_NAME"
           echo "Constructed FULL_PACKAGE_FILENAME: $FULL_PACKAGE_FILENAME"
 
-      # Step 3: Retrieve Package Identifier
-      - name: Retrieve Package Identifier
-        run: |
-          # Dynamically query for the package using the correct filename
-          PACKAGE_QUERY="filename:${{ env.FULL_PACKAGE_FILENAME }}"
-          echo "Querying Cloudsmith for package with filename: $PACKAGE_QUERY"
-
-          PACKAGE_DATA=$(cloudsmith list package \
-            ${{ env.CLOUDSMITH_NAMESPACE }}/${{ env.CLOUDSMITH_STAGING_REPO }} \
-            -q "$PACKAGE_QUERY" -F json)
-
-          IDENTIFIER=$(echo "$PACKAGE_DATA" | jq -r '.data[0].identifier_perm')
-
-          if [ -z "$IDENTIFIER" ] || [ "$IDENTIFIER" = "null" ]; then
-            echo "Failed to find package identifier in Cloudsmith response."
-            exit 1
-          fi
-
-          echo "IDENTIFIER=$IDENTIFIER" >> $GITHUB_ENV
-          echo "Found Package Identifier: $IDENTIFIER"
-
-      # Step 4: Tag the Specific Package
+      # Step 3: Tag the Specific Package
       - name: Tag Package with ready-for-production Tag
         run: |
           cloudsmith tag add \
@@ -88,17 +67,20 @@ jobs:
 
           echo "Package successfully tagged with '${{ env.PACKAGE_TAG }}'."
 
-      # Step 5: Promote Tagged Packages
+      # Step 4: Promote Tagged Packages
       - name: Promote Tagged Packages to Production
         run: |
           echo "Searching for all packages tagged with '${{ env.PACKAGE_TAG }}'"
 
-          # Use --tag to query packages by tag
+          # Query packages tagged with 'ready-for-production'
           PACKAGE_DATA=$(cloudsmith list package \
             ${{ env.CLOUDSMITH_NAMESPACE }}/${{ env.CLOUDSMITH_STAGING_REPO }} \
-            --tag "${{ env.PACKAGE_TAG }}" \
+            -q "tags:${{ env.PACKAGE_TAG }}" \
             -F json)
 
+          echo "Raw PACKAGE_DATA for Tagged Packages: $PACKAGE_DATA"
+
+          # Extract package identifiers for promotion
           IDENTIFIERS=$(echo "$PACKAGE_DATA" | jq -r '.data[].identifier_perm')
 
           if [ -z "$IDENTIFIERS" ]; then
