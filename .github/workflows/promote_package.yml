@@ -56,7 +56,6 @@ jobs:
       # Step 3: Retrieve Package Identifier
       - name: Retrieve Package Identifier
         run: |
-          # Dynamically query for the package using the correct filename
           PACKAGE_QUERY="filename:${{ env.FULL_PACKAGE_FILENAME }}"
           echo "Querying Cloudsmith for package with filename: $PACKAGE_QUERY"
 
@@ -87,21 +86,21 @@ jobs:
           fi
 
           echo "Package successfully tagged with '${{ env.PACKAGE_TAG }}'."
-      # Step 5: Promote Tagged Packages
+
+      # Step 5: Promote Tagged Packages to Production
       - name: Promote Tagged Packages to Production
         run: |
           echo "Searching for all packages tagged with '${{ env.PACKAGE_TAG }}'"
 
-          # Query packages tagged with 'ready-for-production'
+          # Fetch all packages from the repository
           PACKAGE_DATA=$(cloudsmith list package \
             ${{ env.CLOUDSMITH_NAMESPACE }}/${{ env.CLOUDSMITH_STAGING_REPO }} \
-            -q "tags:${{ env.PACKAGE_TAG }}" \
             -F json)
 
-          echo "Raw PACKAGE_DATA for Tagged Packages: $PACKAGE_DATA"
+          echo "Raw PACKAGE_DATA for All Packages: $PACKAGE_DATA"
 
-          # Extract package identifiers for promotion
-          IDENTIFIERS=$(echo "$PACKAGE_DATA" | jq -r '.data[].identifier_perm')
+          # Filter packages with the 'ready-for-production' tag using jq
+          IDENTIFIERS=$(echo "$PACKAGE_DATA" | jq -r ".data[] | select(.tags[] == \"${{ env.PACKAGE_TAG }}\") | .identifier_perm")
 
           if [ -z "$IDENTIFIERS" ]; then
             echo "No packages found with tag '${{ env.PACKAGE_TAG }}'. Exiting."
