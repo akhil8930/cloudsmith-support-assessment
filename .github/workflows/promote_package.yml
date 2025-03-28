@@ -20,20 +20,14 @@ jobs:
     runs-on: ubuntu-latest
 
     steps:
-      # Step 1: Log Webhook Payload
-      - name: Debug Webhook Payload
-        run: |
-          echo "Webhook Payload: ${{ toJson(github.event.client_payload) }}"
-          cat $GITHUB_EVENT_PATH
-
-      # Step 2: Install Cloudsmith CLI
+      # Step 1: Install Cloudsmith CLI
       - name: Install Cloudsmith CLI
         uses: cloudsmith-io/cloudsmith-cli-action@v1.0.1
         with:
           oidc-namespace: ${{ env.CLOUDSMITH_NAMESPACE }}
           oidc-service-slug: ${{ env.CLOUDSMITH_SERVICE_SLUG }}
 
-      # Step 3: Extract Package Name and Version and Handle Underscores
+      # Step 2: Extract Package Name and Version and Handle Underscores
       - name: Extract Package Name and Version
         run: |
           PACKAGE_NAME="${{ github.event.client_payload.package_name }}"
@@ -59,14 +53,7 @@ jobs:
           echo "Transformed FORMATTED_PACKAGE_NAME: $FORMATTED_PACKAGE_NAME"
           echo "Constructed FULL_PACKAGE_FILENAME: $FULL_PACKAGE_FILENAME"
 
-      # Step 4: List All Packages in Staging for Debugging
-      - name: List All Packages in Staging
-        run: |
-          echo "Listing all packages from the staging repository..."
-          PACKAGES=$(cloudsmith list package ${{ env.CLOUDSMITH_NAMESPACE }}/${{ env.CLOUDSMITH_STAGING_REPO }} -F json)
-          echo "Available Packages in Staging: $PACKAGES"
-
-      # Step 5: Retrieve Package Identifier
+      # Step 3: Retrieve Package Identifier
       - name: Retrieve Package Identifier
         run: |
           # Dynamically query for the package using the correct filename
@@ -76,8 +63,6 @@ jobs:
           PACKAGE_DATA=$(cloudsmith list package \
             ${{ env.CLOUDSMITH_NAMESPACE }}/${{ env.CLOUDSMITH_STAGING_REPO }} \
             -q "$PACKAGE_QUERY" -F json)
-
-          echo "Raw PACKAGE_DATA Response: $PACKAGE_DATA"
 
           IDENTIFIER=$(echo "$PACKAGE_DATA" | jq -r '.data[0].identifier_perm')
 
@@ -89,7 +74,7 @@ jobs:
           echo "IDENTIFIER=$IDENTIFIER" >> $GITHUB_ENV
           echo "Found Package Identifier: $IDENTIFIER"
 
-      # Step 6: Tag the Specific Package
+      # Step 4: Tag the Specific Package
       - name: Tag Package with ready-for-production Tag
         run: |
           cloudsmith tag add \
@@ -103,15 +88,16 @@ jobs:
 
           echo "Package successfully tagged with '${{ env.PACKAGE_TAG }}'."
 
-      # Step 7: Promote Tagged Packages
-      - name: Promote All Tagged Packages
+      # Step 5: Promote Tagged Packages
+      - name: Promote Tagged Packages to Production
         run: |
-          PACKAGE_QUERY="tags:${{ env.PACKAGE_TAG }}"
           echo "Searching for all packages tagged with '${{ env.PACKAGE_TAG }}'"
 
-          PACKAGE_DATA=$(cloudsmith list package ${{ env.CLOUDSMITH_NAMESPACE }}/${{ env.CLOUDSMITH_STAGING_REPO }} -q "$PACKAGE_QUERY" -F json)
-
-          echo "Raw PACKAGE_DATA for Tagged Packages: $PACKAGE_DATA"
+          # Use --tag to query packages by tag
+          PACKAGE_DATA=$(cloudsmith list package \
+            ${{ env.CLOUDSMITH_NAMESPACE }}/${{ env.CLOUDSMITH_STAGING_REPO }} \
+            --tag "${{ env.PACKAGE_TAG }}" \
+            -F json)
 
           IDENTIFIERS=$(echo "$PACKAGE_DATA" | jq -r '.data[].identifier_perm')
 
@@ -120,6 +106,7 @@ jobs:
             exit 0
           fi
 
+          # Promote each package to production
           for ID in $IDENTIFIERS; do
             cloudsmith mv --yes \
               ${{ env.CLOUDSMITH_NAMESPACE }}/${{ env.CLOUDSMITH_STAGING_REPO }}/$ID \
@@ -133,4 +120,4 @@ jobs:
             fi
           done
 
-          echo "All tagged packages promoted to production."
+          echo "All tagged packages promoted to '${{ env.CLOUDSMITH_PRODUCTION_REPO }}'."
