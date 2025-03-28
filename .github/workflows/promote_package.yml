@@ -102,7 +102,7 @@ jobs:
           echo "$PACKAGE_DATA" | jq .
 
           # Filter packages with the 'ready-for-production' tag using jq
-          IDENTIFIERS=$(echo "$PACKAGE_DATA" | jq -r ".data[] | select(.tags[]? == \"${{ env.PACKAGE_TAG }}\") | .identifier_perm")
+          IDENTIFIERS=$(echo "$PACKAGE_DATA" | jq -r ".data[] | select(.tags.info[]? == \"${{ env.PACKAGE_TAG }}\") | .identifier_perm")
 
           if [ -z "$IDENTIFIERS" ]; then
             echo "No packages found with tag '${{ env.PACKAGE_TAG }}'. Exiting."
