@@ -21,9 +21,9 @@ jobs:
 
     steps:
       # Step 1: Debug Webhook Payload
-      - name: Debug Webhook Payload
+      - name: Log Webhook Payload
         run: |
-          echo "Webhook Payload: ${{ toJson(github.event.client_payload) }}"
+          echo "Received Webhook Payload: ${{ toJson(github.event.client_payload) }}"
           cat $GITHUB_EVENT_PATH
 
       # Step 2: Install Cloudsmith CLI with OIDC
@@ -39,7 +39,7 @@ jobs:
           # Extract PACKAGE_NAME and PACKAGE_VERSION from the webhook payload
           PACKAGE_NAME="${{ github.event.client_payload.package_name }}"
           PACKAGE_VERSION="${{ github.event.client_payload.package_version }}"
-          
+
           if [ -z "$PACKAGE_NAME" ] || [ -z "$PACKAGE_VERSION" ]; then
             echo "PACKAGE_NAME or PACKAGE_VERSION is missing in the webhook payload."
             exit 1
@@ -55,17 +55,19 @@ jobs:
       - name: Retrieve Package Identifier
         run: |
           # Use PACKAGE_NAME and PACKAGE_VERSION extracted from the webhook payload
-          PACKAGE_QUERY="filename:${{ env.PACKAGE_NAME }}-${{ env.PACKAGE_VERSION }}.tar.gz"
+          PACKAGE_QUERY="filename:${{ env.PACKAGE_NAME }}-${{ env.PACKAGE_VERSION }}.tar.gz" # Use the correct file extension!
           echo "Searching for package with query: $PACKAGE_QUERY"
 
           PACKAGE_DATA=$(cloudsmith list package \
             ${{ env.CLOUDSMITH_NAMESPACE }}/${{ env.CLOUDSMITH_STAGING_REPO }} \
             -q "$PACKAGE_QUERY" -F json)
 
+          echo "Raw PACKAGE_DATA Response: $PACKAGE_DATA"
+
           IDENTIFIER=$(echo "$PACKAGE_DATA" | jq -r '.data[0].identifier_perm')
 
           if [ -z "$IDENTIFIER" ] || [ "$IDENTIFIER" = "null" ]; then
-            echo "Failed to find package identifier."
+            echo "Failed to find package identifier in Cloudsmith response."
             exit 1
           fi
 
@@ -73,7 +75,7 @@ jobs:
           echo "Found Package Identifier: $IDENTIFIER"
 
       # Step 5: Tag the Package
-      - name: Tag Package
+      - name: Tag Package with ready-for-production Tag
         run: |
           cloudsmith tag add \
             "${{ env.CLOUDSMITH_NAMESPACE }}/${{ env.CLOUDSMITH_STAGING_REPO }}/$IDENTIFIER" \
@@ -87,7 +89,7 @@ jobs:
           echo "Package successfully tagged with '${{ env.PACKAGE_TAG }}'."
 
       # Step 6: Promote Tagged Packages
-      - name: Promote Tagged Packages
+      - name: Promote Tagged Packages to Production
         run: |
           PACKAGE_QUERY="tags:${{ env.PACKAGE_TAG }}"
           echo "Searching for all packages tagged with query: $PACKAGE_QUERY"
@@ -95,6 +97,8 @@ jobs:
           PACKAGE_DATA=$(cloudsmith list package \
             ${{ env.CLOUDSMITH_NAMESPACE }}/${{ env.CLOUDSMITH_STAGING_REPO }} \
             -q "$PACKAGE_QUERY" -F json)
+
+          echo "Raw PACKAGE_DATA for Tagged Packages: $PACKAGE_DATA"
 
           IDENTIFIERS=$(echo "$PACKAGE_DATA" | jq -r '.data[].identifier_perm')
 
